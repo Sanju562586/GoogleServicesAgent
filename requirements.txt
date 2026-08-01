@@ -1,0 +1,16 @@
+# Groq SDK
+groq>=0.9.0
+
+# MCP (Model Context Protocol)
+mcp>=1.0.0
+
+# Google APIs
+google-api-python-client>=2.100.0
+google-auth-httplib2>=0.2.0
+google-auth-oauthlib>=1.1.0
+
+# HTTP (Google Photos REST API + Google Maps Platform)
+requests>=2.31.0
+
+# Environment Management
+python-dotenv>=1.0.0

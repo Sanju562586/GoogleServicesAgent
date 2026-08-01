@@ -1,0 +1,75 @@
+# ── Secrets & Credentials (NEVER commit these) ────────────────────────────────
+.env
+.env.*
+!.env.example
+
+# Google OAuth tokens & credentials
+config/credentials.json
+config/token.json
+
+# ── Python ─────────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+*.pyd
+.Python
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+*.egg
+MANIFEST
+wheels/
+pip-wheel-metadata/
+
+# Testing & coverage
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+nosetests.xml
+coverage.xml
+*.cover
+
+# Type checking
+.mypy_cache/
+.pytype/
+.pyre/
+
+# ── Virtual Environments ───────────────────────────────────────────────────────
+venv/
+.venv/
+env/
+ENV/
+
+# ── IDE & Editor ───────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+*.swp
+*.swo
+*~
+
+# ── OS Files ───────────────────────────────────────────────────────────────────
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+Thumbs.db
+desktop.ini
+ehthumbs.db
+
+# ── Logs & Runtime ─────────────────────────────────────────────────────────────
+*.log
+logs/
+*.pid
+
+# ── Project-specific ───────────────────────────────────────────────────────────
+# Keep example files so others can set up the project
+!config/credentials.json.example
+!.env.example
