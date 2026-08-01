@@ -6,7 +6,6 @@ Unified MCP server exposing tools for:
   Drive     — list, search, read, create files/folders
   Calendar  — list, create, update, delete events
   Photos    — list albums, list/search photos
-  Maps      — search places, geocode, get directions
   Tasks     — list task lists, list/create/complete tasks
   Contacts  — list and search contacts
 """
@@ -16,6 +15,7 @@ import base64
 import asyncio
 import os
 import requests
+from pathlib import Path
 from typing import Any
 from datetime import datetime, timedelta, timezone
 from email.mime.text import MIMEText
@@ -35,8 +35,6 @@ from src.gmail_auth import (
 )
 
 app = Server("google-all-mcp")
-MAPS_API_KEY = os.getenv("GOOGLE_MAPS_API_KEY", "")
-MAPS_BASE = "https://maps.googleapis.com/maps/api"
 PHOTOS_BASE = "https://photoslibrary.googleapis.com/v1"
 
 
@@ -251,52 +249,6 @@ async def list_tools() -> list[types.Tool]:
                 },
             },
         ),
-        # ── Google Maps ────────────────────────────────────────────────────────
-        types.Tool(
-            name="maps_search_places",
-            description="Search for places on Google Maps by text query (e.g. 'coffee shops near Pune', 'ATMs in Baner').",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "query": {"type": "string"},
-                    "location": {"type": "string", "description": "Optional center location (city or lat,lng) to bias results."},
-                },
-                "required": ["query"],
-            },
-        ),
-        types.Tool(
-            name="maps_geocode",
-            description="Convert an address to GPS coordinates, or reverse geocode coordinates to an address.",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "address": {"type": "string", "description": "Address to geocode (or leave blank if using latlng)."},
-                    "latlng": {"type": "string", "description": "Coordinates to reverse geocode, e.g. '18.5204,73.8567'."},
-                },
-            },
-        ),
-        types.Tool(
-            name="maps_get_directions",
-            description="Get directions and estimated travel time between two places.",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "origin": {"type": "string"},
-                    "destination": {"type": "string"},
-                    "mode": {"type": "string", "default": "driving", "description": "Travel mode: driving, walking, bicycling, transit."},
-                },
-                "required": ["origin", "destination"],
-            },
-        ),
-        types.Tool(
-            name="maps_place_details",
-            description="Get detailed information about a specific place (hours, rating, phone, website) by its Google Place ID.",
-            inputSchema={
-                "type": "object",
-                "properties": {"place_id": {"type": "string"}},
-                "required": ["place_id"],
-            },
-        ),
         # ── Google Tasks ───────────────────────────────────────────────────────
         types.Tool(
             name="tasks_list_tasklists",
@@ -407,15 +359,6 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[types.TextCont
             return await _photos_list_photos(arguments)
         elif name == "photos_search_photos":
             return await _photos_search_photos(arguments)
-        # Maps
-        elif name == "maps_search_places":
-            return await _maps_search_places(arguments)
-        elif name == "maps_geocode":
-            return await _maps_geocode(arguments)
-        elif name == "maps_get_directions":
-            return await _maps_get_directions(arguments)
-        elif name == "maps_place_details":
-            return await _maps_place_details(arguments)
         # Tasks
         elif name == "tasks_list_tasklists":
             return await _tasks_list_tasklists(arguments)
@@ -494,7 +437,7 @@ async def _gmail_list_emails(args: dict) -> list[types.TextContent]:
     for m in messages:
         msg = service.users().messages().get(
             userId="me", id=m["id"], format="metadata",
-            metadataHeaders=["From", "Subject", "Date"]
+            metadataHeaders=["From", "To", "Subject", "Date"]
         ).execute()
         emails.append(_format_gmail_message(msg))
     return [types.TextContent(type="text", text=json.dumps(emails, indent=2))]
@@ -616,6 +559,9 @@ async def _drive_search_files(args: dict) -> list[types.TextContent]:
     # If query is plain text (no operators), wrap it as name contains
     if "=" not in query and "contains" not in query and "in" not in query:
         query = f"name contains '{query}' and trashed=false"
+    elif "trashed" not in query:
+        # User provided a structured query but forgot to exclude trash
+        query = f"({query}) and trashed=false"
     result = service.files().list(
         q=query,
         pageSize=max_results,
@@ -697,8 +643,10 @@ async def _calendar_list_events(args: dict) -> list[types.TextContent]:
     days = args.get("days_ahead", 7)
     max_results = min(args.get("max_results", 15), 50)
     cal_id = args.get("calendar_id", "primary")
-    now = datetime.now(timezone.utc).isoformat()
-    end = (datetime.now(timezone.utc) + timedelta(days=days)).isoformat()
+    # FIX #6: Google Calendar API requires strict RFC 3339 with 'Z' suffix.
+    # datetime.isoformat() produces '+00:00' which some API versions reject.
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    end = (datetime.now(timezone.utc) + timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%SZ")
     result = service.events().list(
         calendarId=cal_id, timeMin=now, timeMax=end,
         maxResults=max_results, singleEvents=True, orderBy="startTime"
@@ -713,8 +661,10 @@ async def _calendar_search_events(args: dict) -> list[types.TextContent]:
     service = get_calendar_service()
     max_results = min(args.get("max_results", 15), 50)
     cal_id = args.get("calendar_id", "primary")
+    # timeMin is required by Google Calendar API when orderBy="startTime" + singleEvents=True.
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     result = service.events().list(
-        calendarId=cal_id, q=args["query"],
+        calendarId=cal_id, q=args["query"], timeMin=now,
         maxResults=max_results, singleEvents=True, orderBy="startTime"
     ).execute()
     events = result.get("items", [])
@@ -757,19 +707,29 @@ def _photos_headers() -> dict:
     if creds.expired:
         from google.auth.transport.requests import Request
         creds.refresh(Request())
+        # Persist the refreshed token so future calls don't re-trigger a refresh.
+        TOKEN_FILE = Path(__file__).resolve().parent.parent / "config" / "token.json"
+        TOKEN_FILE.write_text(creds.to_json())
     return {"Authorization": f"Bearer {creds.token}"}
 
 
 async def _photos_list_albums(args: dict) -> list[types.TextContent]:
     max_results = min(args.get("max_results", 20), 50)
-    resp = requests.get(
+    # FIX #7: requests.get is blocking I/O — wrap in asyncio.to_thread so it
+    # does not stall the asyncio event loop.
+    resp = await asyncio.to_thread(
+        requests.get,
         f"{PHOTOS_BASE}/albums",
         headers=_photos_headers(),
         params={"pageSize": max_results},
         timeout=15,
     )
     if not resp.ok:
-        return [types.TextContent(type="text", text=f"Photos API error: {resp.text}\n\nNote: The Photos Library API must be enabled in your Google Cloud Console project.")]
+        return [types.TextContent(type="text", text=(
+            f"Photos API HTTP {resp.status_code} error:\n{resp.text}\n\n"
+            "Fix: In Google Cloud Console → APIs & Services → OAuth consent screen → "
+            "Edit App → Scopes → Add 'photoslibrary.readonly', then delete config/token.json and re-run."
+        ))]
     albums = resp.json().get("albums", [])
     if not albums:
         return [types.TextContent(type="text", text="No albums found.")]
@@ -780,22 +740,25 @@ async def _photos_list_albums(args: dict) -> list[types.TextContent]:
 async def _photos_list_photos(args: dict) -> list[types.TextContent]:
     max_results = min(args.get("max_results", 20), 50)
     headers = _photos_headers()
+    # FIX #7: Wrap blocking requests.post in asyncio.to_thread.
     if args.get("album_id"):
-        resp = requests.post(
+        resp = await asyncio.to_thread(
+            requests.post,
             f"{PHOTOS_BASE}/mediaItems:search",
             headers=headers,
             json={"albumId": args["album_id"], "pageSize": max_results},
             timeout=15,
         )
     else:
-        resp = requests.post(
+        resp = await asyncio.to_thread(
+            requests.post,
             f"{PHOTOS_BASE}/mediaItems:search",
             headers=headers,
             json={"pageSize": max_results},
             timeout=15,
         )
     if not resp.ok:
-        return [types.TextContent(type="text", text=f"Photos API error: {resp.text}")]
+        return [types.TextContent(type="text", text=f"Photos API HTTP {resp.status_code} error:\n{resp.text}")]
     items = resp.json().get("mediaItems", [])
     if not items:
         return [types.TextContent(type="text", text="No photos found.")]
@@ -820,7 +783,9 @@ async def _photos_search_photos(args: dict) -> list[types.TextContent]:
     body: dict = {"pageSize": max_results}
     if filters:
         body["filters"] = filters
-    resp = requests.post(
+    # FIX #7: Wrap blocking requests.post in asyncio.to_thread.
+    resp = await asyncio.to_thread(
+        requests.post,
         f"{PHOTOS_BASE}/mediaItems:search",
         headers=_photos_headers(),
         json=body,
@@ -833,116 +798,6 @@ async def _photos_search_photos(args: dict) -> list[types.TextContent]:
         return [types.TextContent(type="text", text="No photos found matching your search.")]
     formatted = [{"id": i["id"], "filename": i.get("filename"), "creationTime": i.get("mediaMetadata", {}).get("creationTime"), "url": i.get("productUrl")} for i in items]
     return [types.TextContent(type="text", text=json.dumps(formatted, indent=2))]
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# Google Maps helpers (Maps Platform APIs — requires GOOGLE_MAPS_API_KEY)
-# ══════════════════════════════════════════════════════════════════════════════
-
-def _maps_check_key() -> str | None:
-    if not MAPS_API_KEY:
-        return "GOOGLE_MAPS_API_KEY is not set in .env. Add your Maps API key to enable Maps tools."
-    return None
-
-
-async def _maps_search_places(args: dict) -> list[types.TextContent]:
-    if err := _maps_check_key():
-        return [types.TextContent(type="text", text=err)]
-    params: dict = {"query": args["query"], "key": MAPS_API_KEY}
-    if args.get("location"):
-        params["location"] = args["location"]
-    resp = requests.get(f"{MAPS_BASE}/place/textsearch/json", params=params, timeout=15)
-    data = resp.json()
-    if data.get("status") not in ("OK", "ZERO_RESULTS"):
-        return [types.TextContent(type="text", text=f"Maps API error: {data.get('status')} — {data.get('error_message', '')}")]
-    results = data.get("results", [])
-    if not results:
-        return [types.TextContent(type="text", text="No places found.")]
-    places = [{
-        "name": r.get("name"),
-        "address": r.get("formatted_address"),
-        "rating": r.get("rating"),
-        "place_id": r.get("place_id"),
-        "open_now": r.get("opening_hours", {}).get("open_now"),
-        "types": r.get("types", [])[:3],
-    } for r in results[:10]]
-    return [types.TextContent(type="text", text=json.dumps(places, indent=2))]
-
-
-async def _maps_geocode(args: dict) -> list[types.TextContent]:
-    if err := _maps_check_key():
-        return [types.TextContent(type="text", text=err)]
-    params: dict = {"key": MAPS_API_KEY}
-    if args.get("address"):
-        params["address"] = args["address"]
-    elif args.get("latlng"):
-        params["latlng"] = args["latlng"]
-    else:
-        return [types.TextContent(type="text", text="Provide either 'address' or 'latlng'.")]
-    resp = requests.get(f"{MAPS_BASE}/geocode/json", params=params, timeout=15)
-    data = resp.json()
-    results = data.get("results", [])
-    if not results:
-        return [types.TextContent(type="text", text="No geocoding results found.")]
-    r = results[0]
-    out = {
-        "formatted_address": r.get("formatted_address"),
-        "lat": r["geometry"]["location"]["lat"],
-        "lng": r["geometry"]["location"]["lng"],
-        "place_id": r.get("place_id"),
-    }
-    return [types.TextContent(type="text", text=json.dumps(out, indent=2))]
-
-
-async def _maps_get_directions(args: dict) -> list[types.TextContent]:
-    if err := _maps_check_key():
-        return [types.TextContent(type="text", text=err)]
-    params = {
-        "origin": args["origin"],
-        "destination": args["destination"],
-        "mode": args.get("mode", "driving"),
-        "key": MAPS_API_KEY,
-    }
-    resp = requests.get(f"{MAPS_BASE}/directions/json", params=params, timeout=15)
-    data = resp.json()
-    if data.get("status") != "OK":
-        return [types.TextContent(type="text", text=f"Directions error: {data.get('status')} — {data.get('error_message', '')}")]
-    route = data["routes"][0]
-    leg = route["legs"][0]
-    steps = [{"instruction": s["html_instructions"], "distance": s["distance"]["text"], "duration": s["duration"]["text"]} for s in leg["steps"][:15]]
-    out = {
-        "from": leg["start_address"],
-        "to": leg["end_address"],
-        "total_distance": leg["distance"]["text"],
-        "total_duration": leg["duration"]["text"],
-        "mode": args.get("mode", "driving"),
-        "steps": steps,
-    }
-    return [types.TextContent(type="text", text=json.dumps(out, indent=2))]
-
-
-async def _maps_place_details(args: dict) -> list[types.TextContent]:
-    if err := _maps_check_key():
-        return [types.TextContent(type="text", text=err)]
-    params = {
-        "place_id": args["place_id"],
-        "fields": "name,formatted_address,formatted_phone_number,website,rating,opening_hours,reviews",
-        "key": MAPS_API_KEY,
-    }
-    resp = requests.get(f"{MAPS_BASE}/place/details/json", params=params, timeout=15)
-    data = resp.json()
-    if data.get("status") != "OK":
-        return [types.TextContent(type="text", text=f"Place details error: {data.get('status')}")]
-    result = data.get("result", {})
-    out = {
-        "name": result.get("name"),
-        "address": result.get("formatted_address"),
-        "phone": result.get("formatted_phone_number"),
-        "website": result.get("website"),
-        "rating": result.get("rating"),
-        "hours": result.get("opening_hours", {}).get("weekday_text", []),
-    }
-    return [types.TextContent(type="text", text=json.dumps(out, indent=2))]
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -990,10 +845,13 @@ async def _tasks_create_task(args: dict) -> list[types.TextContent]:
 async def _tasks_complete_task(args: dict) -> list[types.TextContent]:
     service = get_tasks_service()
     tasklist_id = args.get("tasklist_id", "@default")
-    task = service.tasks().get(tasklist=tasklist_id, task=args["task_id"]).execute()
-    task["status"] = "completed"
-    updated = service.tasks().update(tasklist=tasklist_id, task=args["task_id"], body=task).execute()
-    return [types.TextContent(type="text", text=f"Task '{updated['title']}' marked as completed.")]
+    # Use patch() with only the changed field — sending the full task object via update()
+    # causes a 400 error because read-only fields (etag, selfLink, kind, etc.) are rejected.
+    task_id = args["task_id"]
+    updated = service.tasks().patch(
+        tasklist=tasklist_id, task=task_id, body={"status": "completed"}
+    ).execute()
+    return [types.TextContent(type="text", text=f"Task '{updated.get('title', task_id)}' marked as completed.")]
 
 
 # ══════════════════════════════════════════════════════════════════════════════
