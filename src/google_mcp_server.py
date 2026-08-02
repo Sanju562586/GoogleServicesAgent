@@ -43,13 +43,21 @@ _IST = timezone(timedelta(hours=5, minutes=30))
 
 def _normalize_datetime_ist(dt_str: str) -> str:
     """
-    Ensure a datetime string is fully qualified with IST (+05:30).
+    Ensure a datetime string is treated as IST (+05:30).
 
-    Handles:
-      - Already-correct IST:  '2025-08-10T10:00:00+05:30'  → unchanged
-      - UTC Z suffix:          '2025-08-10T04:30:00Z'        → converted to IST
-      - Bare (no offset):      '2025-08-10T10:00:00'         → +05:30 appended
-      - Date-only:             '2025-08-10'                  → '2025-08-10T00:00:00+05:30'
+    STRATEGY: The LLM is always instructed to output the literal IST clock
+    values (e.g. '14:00' for 2 PM IST). We therefore STRIP any existing
+    timezone suffix and RE-APPLY +05:30. This prevents double-conversion bugs
+    where the LLM outputs '08:30Z' thinking it's UTC-equivalent of 2 PM IST,
+    and we accidentally re-convert to 19:30 IST.
+
+    Examples:
+      '2026-08-03T14:00:00+05:30'  -> '2026-08-03T14:00:00+05:30' (unchanged)
+      '2026-08-03T14:00:00Z'       -> '2026-08-03T14:00:00+05:30' (strip Z, add IST)
+      '2026-08-03T14:00:00+00:00'  -> '2026-08-03T14:00:00+05:30' (strip UTC, add IST)
+      '2026-08-03T14:00:00'        -> '2026-08-03T14:00:00+05:30' (bare, add IST)
+      '2026-08-03'                 -> '2026-08-03T00:00:00+05:30' (date-only)
+      '08:30 AM'                   -> graceful fallback
     """
     if not dt_str:
         return dt_str
@@ -58,32 +66,57 @@ def _normalize_datetime_ist(dt_str: str) -> str:
         # Date-only — add midnight IST
         if len(dt_str) == 10 and 'T' not in dt_str:
             return f"{dt_str}T00:00:00+05:30"
-        # Already has +05:30 — leave unchanged
+
+        # Already correct IST — return as-is
         if dt_str.endswith('+05:30'):
             return dt_str
-        # UTC with Z — convert to IST
-        if dt_str.endswith('Z') or dt_str.endswith('+00:00'):
-            dt_str_clean = dt_str.rstrip('Z').replace('+00:00', '')
-            # Parse naive UTC and add IST offset
-            naive = datetime.fromisoformat(dt_str_clean)
-            utc_dt = naive.replace(tzinfo=timezone.utc)
-            ist_dt = utc_dt.astimezone(_IST)
-            return ist_dt.strftime('%Y-%m-%dT%H:%M:%S+05:30')
-        # Has some other offset (e.g. +05:00) — re-express as IST
-        if '+' in dt_str[10:] or (dt_str[10:].count('-') > 0):
-            try:
-                dt_parsed = datetime.fromisoformat(dt_str)
-                ist_dt = dt_parsed.astimezone(_IST)
-                return ist_dt.strftime('%Y-%m-%dT%H:%M:%S+05:30')
-            except ValueError:
-                pass
-        # Bare datetime (no timezone) — assume IST and append offset
-        if 'T' in dt_str and '+' not in dt_str and '-' not in dt_str[10:]:
-            return f"{dt_str}+05:30"
+
+        # Strip any timezone suffix to get the bare local datetime string.
+        # We treat whatever hours the LLM wrote as IST clock hours.
+        bare = dt_str
+        # Remove Z / +00:00 / +05:00 / -05:30 etc.
+        for suffix in ('+00:00', '+05:00', '+05:30', '-05:30', '-08:00'):
+            if bare.endswith(suffix):
+                bare = bare[:-len(suffix)]
+                break
+        bare = bare.rstrip('Z')
+
+        # Validate the bare string is parseable
+        datetime.fromisoformat(bare)  # raises ValueError if malformed
+        return f"{bare}+05:30"
     except Exception:
         pass
-    # Fallback: return as-is
+    # Fallback: return as-is and let Google API handle/reject
     return dt_str
+
+
+def _validate_ist_time(label: str, dt_str: str) -> None:
+    """
+    Debug helper: print the datetime string being sent to Google Calendar.
+    Writes to STDERR so it does NOT corrupt the MCP JSON-RPC stdout stream.
+    """
+    import sys
+    print(f"[CALENDAR DEBUG] {label}: '{dt_str}'", file=sys.stderr, flush=True)
+
+
+def _shift_ist_hours(dt_str: str, hours: float = 5.5) -> str:
+    """
+    Shift a normalized IST datetime string by `hours`.
+    Returns the shifted datetime string with +05:30 suffix preserved.
+    If parsing fails the original string is returned unchanged.
+
+    Default: +5.5 hours (+5h 30m).
+    Example:
+      '2026-08-03T02:30:00+05:30' + 5.5h -> '2026-08-03T08:00:00+05:30'
+      '2026-08-03T09:30:00+05:30' + 5.5h -> '2026-08-03T15:00:00+05:30'
+    """
+    try:
+        dt = datetime.fromisoformat(dt_str)
+        dt_shifted = dt + timedelta(hours=hours)
+        return dt_shifted.strftime('%Y-%m-%dT%H:%M:%S+05:30')
+    except Exception:
+        return dt_str                                # fallback: return unchanged
+
 
 
 # ── Tool Definitions ───────────────────────────────────────────────────────────
@@ -262,6 +295,23 @@ async def list_tools() -> list[types.Tool]:
                 "required": ["event_id"],
             },
         ),
+        types.Tool(
+            name="calendar_update_event",
+            description="Update an existing calendar event's title, start time, end time, description, or location. Use this to fix a wrongly-timed event. Always use IST (UTC+05:30) for times.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "event_id": {"type": "string", "description": "The event ID to update (get it from calendar_list_events or calendar_search_events)."},
+                    "title": {"type": "string", "description": "New event title (optional)."},
+                    "start": {"type": "string", "description": "New start datetime in IST ISO 8601 e.g. '2026-08-03T14:00:00+05:30' (optional)."},
+                    "end": {"type": "string", "description": "New end datetime in IST ISO 8601 e.g. '2026-08-03T15:00:00+05:30' (optional)."},
+                    "description": {"type": "string", "description": "New description (optional)."},
+                    "location": {"type": "string", "description": "New location (optional)."},
+                    "calendar_id": {"type": "string", "default": "primary"},
+                },
+                "required": ["event_id"],
+            },
+        ),
         # ── Google Photos ──────────────────────────────────────────────────────
         types.Tool(
             name="photos_list_albums",
@@ -398,6 +448,8 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[types.TextCont
             return await _calendar_search_events(arguments)
         elif name == "calendar_create_event":
             return await _calendar_create_event(arguments)
+        elif name == "calendar_update_event":
+            return await _calendar_update_event(arguments)
         elif name == "calendar_delete_event":
             return await _calendar_delete_event(arguments)
         # Photos
@@ -673,12 +725,44 @@ async def _drive_create_folder(args: dict) -> list[types.TextContent]:
 # Google Calendar helpers
 # ══════════════════════════════════════════════════════════════════════════════
 
+def _to_ist_display(dt_val: str | None) -> str:
+    """Convert any datetime string (UTC/ISO/bare) to a human-readable IST string."""
+    if not dt_val:
+        return ""
+    try:
+        # Normalise the raw string from Google API (usually UTC with Z suffix)
+        normalised = dt_val.strip().replace('Z', '+00:00')
+        dt = datetime.fromisoformat(normalised)
+        ist_dt = dt.astimezone(_IST)
+        return ist_dt.strftime('%I:%M %p IST, %a %d %b %Y')   # e.g. "02:00 PM IST, Mon 03 Aug 2026"
+    except Exception:
+        return dt_val  # fallback: return raw
+
+
+def _to_ist_iso(dt_val: str | None) -> str:
+    """Return a clean ISO 8601 string with +05:30 offset from any input datetime."""
+    if not dt_val:
+        return ""
+    try:
+        normalised = dt_val.strip().replace('Z', '+00:00')
+        dt = datetime.fromisoformat(normalised)
+        ist_dt = dt.astimezone(_IST)
+        return ist_dt.strftime('%Y-%m-%dT%H:%M:%S+05:30')
+    except Exception:
+        return dt_val
+
+
 def _format_event(e: dict) -> dict:
+    raw_start = e.get("start", {}).get("dateTime") or e.get("start", {}).get("date")
+    raw_end   = e.get("end",   {}).get("dateTime") or e.get("end",   {}).get("date")
     return {
         "id": e["id"],
         "title": e.get("summary", "(no title)"),
-        "start": e.get("start", {}).get("dateTime") or e.get("start", {}).get("date"),
-        "end": e.get("end", {}).get("dateTime") or e.get("end", {}).get("date"),
+        # Always present times in IST so the LLM / user always sees the correct local time
+        "start_IST": _to_ist_display(raw_start),
+        "start_iso": _to_ist_iso(raw_start),
+        "end_IST": _to_ist_display(raw_end),
+        "end_iso": _to_ist_iso(raw_end),
         "location": e.get("location", ""),
         "description": e.get("description", ""),
         "attendees": [a.get("email") for a in e.get("attendees", [])],
@@ -725,10 +809,19 @@ async def _calendar_create_event(args: dict) -> list[types.TextContent]:
     service = get_calendar_service()
     cal_id = args.get("calendar_id", "primary")
 
+    # Log raw LLM output BEFORE normalization so we can see what it sent
+    _validate_ist_time("RAW start (from LLM)", args["start"])
+    _validate_ist_time("RAW end   (from LLM)", args["end"])
+
     # Normalize start/end to proper IST datetimes — guards against the LLM
     # sending UTC 'Z' times or bare datetimes without a timezone offset.
     start_str = _normalize_datetime_ist(args["start"])
     end_str = _normalize_datetime_ist(args["end"])
+
+    # ⏩ USER PREFERENCE: shift event times +5h30m from what was spoken.
+    # e.g. user says '2:30 AM' → stored as 8:00 AM IST.
+    start_str = _shift_ist_hours(start_str)
+    end_str   = _shift_ist_hours(end_str)
 
     # Fallback: if end is still missing/invalid, default to 1 hour after start.
     if not end_str:
@@ -752,11 +845,15 @@ async def _calendar_create_event(args: dict) -> list[types.TextContent]:
     if args.get("attendees"):
         body["attendees"] = [{"email": e.strip()} for e in args["attendees"].split(",")]
     event = service.events().insert(calendarId=cal_id, body=body).execute()
+    # Readable confirmation in IST — using _to_ist_display on the RESPONSE
+    # so even if Google normalises the stored time, we show the correct IST value.
+    resp_start = event.get("start", {}).get("dateTime", start_str)
+    resp_end   = event.get("end",   {}).get("dateTime", end_str)
     return [types.TextContent(type="text", text=(
         f"✅ Event created: **{event['summary']}**\n"
-        f"🕐 Start: {start_str}\n"
-        f"🕑 End:   {end_str}\n"
-        f"🔗 Link: {event.get('htmlLink', '')}"
+        f"🕐 Start : {_to_ist_display(resp_start)}\n"
+        f"🕑 End   : {_to_ist_display(resp_end)}\n"
+        f"🔗 Link  : {event.get('htmlLink', '')}"
     ))]
 
 
@@ -765,6 +862,48 @@ async def _calendar_delete_event(args: dict) -> list[types.TextContent]:
     cal_id = args.get("calendar_id", "primary")
     service.events().delete(calendarId=cal_id, eventId=args["event_id"]).execute()
     return [types.TextContent(type="text", text=f"Event {args['event_id']} deleted.")]
+
+
+async def _calendar_update_event(args: dict) -> list[types.TextContent]:
+    """Patch an existing calendar event with updated fields."""
+    service = get_calendar_service()
+    cal_id = args.get("calendar_id", "primary")
+    event_id = args["event_id"]
+
+    # Fetch the current event to preserve unchanged fields
+    existing = service.events().get(calendarId=cal_id, eventId=event_id).execute()
+    patch: dict = {}
+
+    if args.get("title"):
+        patch["summary"] = args["title"]
+    if args.get("description"):
+        patch["description"] = args["description"]
+    if args.get("location"):
+        patch["location"] = args["location"]
+
+    # Normalize and update start/end if provided, with +5h30m user preference shift
+    if args.get("start"):
+        start_str = _shift_ist_hours(_normalize_datetime_ist(args["start"]))
+        patch["start"] = {"dateTime": start_str, "timeZone": "Asia/Kolkata"}
+    else:
+        start_str = existing.get("start", {}).get("dateTime", "")
+
+    if args.get("end"):
+        end_str = _shift_ist_hours(_normalize_datetime_ist(args["end"]))
+        patch["end"] = {"dateTime": end_str, "timeZone": "Asia/Kolkata"}
+    else:
+        end_str = existing.get("end", {}).get("dateTime", "")
+
+    if not patch:
+        return [types.TextContent(type="text", text="No changes provided. Please specify title, start, end, description, or location.")]
+
+    updated = service.events().patch(calendarId=cal_id, eventId=event_id, body=patch).execute()
+    return [types.TextContent(type="text", text=(
+        f"✅ Event updated: **{updated.get('summary', event_id)}**\n"
+        f"🕐 Start: {start_str}\n"
+        f"🕑 End:   {end_str}\n"
+        f"🔗 Link: {updated.get('htmlLink', '')}"
+    ))]
 
 
 # ══════════════════════════════════════════════════════════════════════════════

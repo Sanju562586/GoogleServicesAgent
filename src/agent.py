@@ -62,7 +62,7 @@ You have the following tools available:
 
 GMAIL: gmail_list_emails, gmail_search_emails, gmail_get_email, gmail_send_email, gmail_reply_email
 GOOGLE DRIVE: drive_list_files, drive_search_files, drive_get_file, drive_read_file, drive_create_folder
-GOOGLE CALENDAR: calendar_list_events, calendar_search_events, calendar_create_event, calendar_delete_event
+GOOGLE CALENDAR: calendar_list_events, calendar_search_events, calendar_create_event, calendar_update_event, calendar_delete_event
 GOOGLE PHOTOS: photos_list_albums, photos_list_photos, photos_search_photos
 GOOGLE TASKS: tasks_list_tasklists, tasks_list_tasks, tasks_create_task, tasks_complete_task
 GOOGLE CONTACTS: contacts_list, contacts_search
@@ -77,14 +77,38 @@ CRITICAL RULES — YOU MUST FOLLOW THESE WITHOUT EXCEPTION:
 7. Always ask for confirmation before sending emails, creating/deleting calendar events, or creating tasks.
 8. Present results clearly, concisely, and beautifully formatted in markdown.
 
-TIME & TIMEZONE RULES (CRITICAL — follow for ALL calendar/task operations):
-- The user is in IST (India Standard Time, UTC+05:30). Always use +05:30 as the timezone offset.
-- When the user says a time like '3 PM', '10 AM', 'tomorrow at 6', always convert it to a full ISO 8601 string: YYYY-MM-DDTHH:MM:SS+05:30.
-- 'Today' = the current date shown above. 'Tomorrow' = current date + 1 day.
-- NEVER use UTC (Z suffix) for calendar event start/end times — always use +05:30.
-- For Google Tasks 'due' field, use YYYY-MM-DDTHH:MM:SS+05:30 format (the time part will be treated as midnight locally).
-- If the user does not specify an end time for a calendar event, default the event duration to 1 hour.
-- ALWAYS confirm the exact date and time you understood before creating a calendar event or task.
+TIME & TIMEZONE RULES — ABSOLUTE MANDATORY RULES (ALL calendar/task operations):
+
+  RULE 1 — USE IST LITERAL CLOCK VALUES, NEVER CONVERT TO UTC:
+    ✅ User says '3 PM'  → use 15:00  → datetime = YYYY-MM-DDTHH:MM:SS+05:30 with HH=15
+    ✅ User says '5 PM'  → use 17:00  → datetime = YYYY-MM-DDTHH:MM:SS+05:30 with HH=17
+    ✅ User says '10 AM' → use 10:00  → datetime = YYYY-MM-DDTHH:MM:SS+05:30 with HH=10
+    ❌ NEVER subtract 5:30 from clock value. 3 PM is NOT 09:30Z. 3 PM IS 15:00+05:30.
+    ❌ NEVER use Z suffix. NEVER use +00:00. ALWAYS use +05:30.
+
+  RULE 2 — FORMAT:
+    YYYY-MM-DDTHH:MM:SS+05:30  — always include the +05:30 suffix, NEVER Z, NEVER +00:00.
+    Examples:
+      3 PM IST on Aug 3  = '2026-08-03T15:00:00+05:30'
+      5 PM IST on Aug 3  = '2026-08-03T17:00:00+05:30'
+      8:30 AM IST on Aug 3 = '2026-08-03T08:30:00+05:30'
+
+  RULE 3 — DATE REFERENCES:
+    'Today' = the current date shown above in {time_context}.
+    'Tomorrow' = current date + 1 day.
+    Always compute the exact date before making a tool call.
+
+  RULE 4 — MISSING END TIME:
+    If the user specifies only start time, default end = start + 1 hour.
+    Example: start=15:00+05:30 → end=16:00+05:30
+
+  RULE 5 — SECONDS:
+    Always use :00 for seconds unless the user specifies them.
+
+  RULE 6 — CONFIRMATION:
+    Before calling calendar_create_event or calendar_update_event, state:
+    'I will create/update the event on [DATE] from [START IST] to [END IST].'
+    Then immediately call the tool with those EXACT times.
 """
 
 
@@ -155,7 +179,17 @@ class GmailGroqAgent:
             trim_to = MAX_HISTORY_MESSAGES - (MAX_HISTORY_MESSAGES % 2)
             self.history = self.history[-trim_to:]
 
+        # Hard cap: prevents runaway tool-call chains or recovery loops.
+        MAX_CHAT_ITERATIONS = 20
+        iterations = 0
+
         while True:
+            iterations += 1
+            if iterations > MAX_CHAT_ITERATIONS:
+                msg = f"⚠️ Stopped after {MAX_CHAT_ITERATIONS} iterations to prevent infinite loop."
+                self.history.append({"role": "assistant", "content": msg})
+                return msg
+
             response = None
             last_err = None
             # FIX #1: Track whether we successfully recovered from a failed
@@ -177,6 +211,9 @@ class GmailGroqAgent:
                         tool_choice="auto",
                     )
                     break
+                except asyncio.CancelledError:
+                    # Always re-raise CancelledError — never swallow it.
+                    raise
                 except Exception as e:
                     last_err = e
                     err_str = str(e)
@@ -186,7 +223,10 @@ class GmailGroqAgent:
                         continue
                     if "429" in err_str or "rate_limit_exceeded" in err_str:
                         print(f"⚠️ Model {model_name} rate limited. Trying fallback model...")
-                        await asyncio.sleep(1)  # Brief pause before trying next model
+                        try:
+                            await asyncio.sleep(1)  # Brief pause before trying next model
+                        except asyncio.CancelledError:
+                            raise
                         continue
                     # Handle Groq's tool_use_failed error by recovering from failed_generation
                     failed_call = _parse_failed_generation(e)
