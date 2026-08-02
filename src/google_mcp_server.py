@@ -37,6 +37,54 @@ from src.gmail_auth import (
 app = Server("google-all-mcp")
 PHOTOS_BASE = "https://photoslibrary.googleapis.com/v1"
 
+# IST offset constant (UTC+05:30)
+_IST = timezone(timedelta(hours=5, minutes=30))
+
+
+def _normalize_datetime_ist(dt_str: str) -> str:
+    """
+    Ensure a datetime string is fully qualified with IST (+05:30).
+
+    Handles:
+      - Already-correct IST:  '2025-08-10T10:00:00+05:30'  → unchanged
+      - UTC Z suffix:          '2025-08-10T04:30:00Z'        → converted to IST
+      - Bare (no offset):      '2025-08-10T10:00:00'         → +05:30 appended
+      - Date-only:             '2025-08-10'                  → '2025-08-10T00:00:00+05:30'
+    """
+    if not dt_str:
+        return dt_str
+    dt_str = dt_str.strip()
+    try:
+        # Date-only — add midnight IST
+        if len(dt_str) == 10 and 'T' not in dt_str:
+            return f"{dt_str}T00:00:00+05:30"
+        # Already has +05:30 — leave unchanged
+        if dt_str.endswith('+05:30'):
+            return dt_str
+        # UTC with Z — convert to IST
+        if dt_str.endswith('Z') or dt_str.endswith('+00:00'):
+            dt_str_clean = dt_str.rstrip('Z').replace('+00:00', '')
+            # Parse naive UTC and add IST offset
+            naive = datetime.fromisoformat(dt_str_clean)
+            utc_dt = naive.replace(tzinfo=timezone.utc)
+            ist_dt = utc_dt.astimezone(_IST)
+            return ist_dt.strftime('%Y-%m-%dT%H:%M:%S+05:30')
+        # Has some other offset (e.g. +05:00) — re-express as IST
+        if '+' in dt_str[10:] or (dt_str[10:].count('-') > 0):
+            try:
+                dt_parsed = datetime.fromisoformat(dt_str)
+                ist_dt = dt_parsed.astimezone(_IST)
+                return ist_dt.strftime('%Y-%m-%dT%H:%M:%S+05:30')
+            except ValueError:
+                pass
+        # Bare datetime (no timezone) — assume IST and append offset
+        if 'T' in dt_str and '+' not in dt_str and '-' not in dt_str[10:]:
+            return f"{dt_str}+05:30"
+    except Exception:
+        pass
+    # Fallback: return as-is
+    return dt_str
+
 
 # ── Tool Definitions ───────────────────────────────────────────────────────────
 
@@ -187,13 +235,13 @@ async def list_tools() -> list[types.Tool]:
         ),
         types.Tool(
             name="calendar_create_event",
-            description="Create a new event on Google Calendar.",
+            description="Create a new event on Google Calendar. Always provide start and end times in IST (India Standard Time, UTC+05:30) using ISO 8601 format. Example: '2025-08-10T10:00:00+05:30'.",
             inputSchema={
                 "type": "object",
                 "properties": {
                     "title": {"type": "string"},
-                    "start": {"type": "string", "description": "Start datetime ISO 8601 e.g. '2025-08-10T10:00:00+05:30'."},
-                    "end": {"type": "string", "description": "End datetime ISO 8601."},
+                    "start": {"type": "string", "description": "Start datetime in IST ISO 8601 format e.g. '2025-08-10T10:00:00+05:30'. MUST include +05:30 timezone offset."},
+                    "end": {"type": "string", "description": "End datetime in IST ISO 8601 format e.g. '2025-08-10T11:00:00+05:30'. MUST include +05:30 timezone offset. Default to 1 hour after start if not specified."},
                     "description": {"type": "string"},
                     "location": {"type": "string"},
                     "attendees": {"type": "string", "description": "Comma-separated attendee emails."},
@@ -269,13 +317,13 @@ async def list_tools() -> list[types.Tool]:
         ),
         types.Tool(
             name="tasks_create_task",
-            description="Create a new task in Google Tasks.",
+            description="Create a new task in Google Tasks. For the due date, always use IST (UTC+05:30) ISO 8601 format e.g. '2025-08-15T00:00:00+05:30'. Only the date portion is stored by Google Tasks.",
             inputSchema={
                 "type": "object",
                 "properties": {
                     "title": {"type": "string"},
                     "notes": {"type": "string"},
-                    "due": {"type": "string", "description": "Due date in ISO 8601 format e.g. '2025-08-15T00:00:00Z'."},
+                    "due": {"type": "string", "description": "Due date in IST ISO 8601 format e.g. '2025-08-15T00:00:00+05:30'. Only the date portion is used."},
                     "tasklist_id": {"type": "string", "default": "@default"},
                 },
                 "required": ["title"],
@@ -676,10 +724,26 @@ async def _calendar_search_events(args: dict) -> list[types.TextContent]:
 async def _calendar_create_event(args: dict) -> list[types.TextContent]:
     service = get_calendar_service()
     cal_id = args.get("calendar_id", "primary")
+
+    # Normalize start/end to proper IST datetimes — guards against the LLM
+    # sending UTC 'Z' times or bare datetimes without a timezone offset.
+    start_str = _normalize_datetime_ist(args["start"])
+    end_str = _normalize_datetime_ist(args["end"])
+
+    # Fallback: if end is still missing/invalid, default to 1 hour after start.
+    if not end_str:
+        try:
+            from datetime import datetime
+            start_dt = datetime.fromisoformat(start_str)
+            end_dt = start_dt + timedelta(hours=1)
+            end_str = end_dt.strftime('%Y-%m-%dT%H:%M:%S+05:30')
+        except Exception:
+            end_str = start_str  # worst-case fallback
+
     body: dict = {
         "summary": args["title"],
-        "start": {"dateTime": args["start"], "timeZone": "Asia/Kolkata"},
-        "end": {"dateTime": args["end"], "timeZone": "Asia/Kolkata"},
+        "start": {"dateTime": start_str, "timeZone": "Asia/Kolkata"},
+        "end": {"dateTime": end_str, "timeZone": "Asia/Kolkata"},
     }
     if args.get("description"):
         body["description"] = args["description"]
@@ -688,7 +752,12 @@ async def _calendar_create_event(args: dict) -> list[types.TextContent]:
     if args.get("attendees"):
         body["attendees"] = [{"email": e.strip()} for e in args["attendees"].split(",")]
     event = service.events().insert(calendarId=cal_id, body=body).execute()
-    return [types.TextContent(type="text", text=f"Event created: {event['summary']}\nLink: {event.get('htmlLink', '')}")]
+    return [types.TextContent(type="text", text=(
+        f"✅ Event created: **{event['summary']}**\n"
+        f"🕐 Start: {start_str}\n"
+        f"🕑 End:   {end_str}\n"
+        f"🔗 Link: {event.get('htmlLink', '')}"
+    ))]
 
 
 async def _calendar_delete_event(args: dict) -> list[types.TextContent]:
@@ -837,9 +906,39 @@ async def _tasks_create_task(args: dict) -> list[types.TextContent]:
     if args.get("notes"):
         body["notes"] = args["notes"]
     if args.get("due"):
-        body["due"] = args["due"]
+        # Google Tasks API requires due in RFC 3339 UTC format (ends with 'Z').
+        # Normalize: convert IST (+05:30) or bare datetime to UTC 'Z' format.
+        due_str = args["due"].strip()
+        try:
+            # Parse with or without timezone info
+            if due_str.endswith('Z') or due_str.endswith('+00:00'):
+                # Already UTC — keep as-is, just ensure Z suffix
+                due_normalized = due_str.replace('+00:00', 'Z')
+                if not due_normalized.endswith('Z'):
+                    due_normalized += 'Z'
+            else:
+                # Parse as IST (or whatever offset is present) and convert to UTC
+                ist_dt = datetime.fromisoformat(
+                    due_str if ('+' in due_str[10:] or due_str.count('-') > 3)
+                    else due_str + '+05:30'
+                )
+                utc_dt = ist_dt.astimezone(timezone.utc)
+                due_normalized = utc_dt.strftime('%Y-%m-%dT%H:%M:%SZ')
+        except Exception:
+            # Fallback: pass as-is and let Google API validate
+            due_normalized = due_str
+        body["due"] = due_normalized
     task = service.tasks().insert(tasklist=tasklist_id, body=body).execute()
-    return [types.TextContent(type="text", text=f"Task created: '{task['title']}' (ID: {task['id']})")]
+    # Show the due date in IST for user-friendly confirmation
+    due_display = ""
+    if task.get("due"):
+        try:
+            utc_due = datetime.fromisoformat(task["due"].replace('Z', '+00:00'))
+            ist_due = utc_due.astimezone(_IST)
+            due_display = f"\n📅 Due: {ist_due.strftime('%A, %d %B %Y')}"
+        except Exception:
+            due_display = f"\n📅 Due: {task['due']}"
+    return [types.TextContent(type="text", text=f"✅ Task created: '{task['title']}' (ID: {task['id']}){due_display}")]
 
 
 async def _tasks_complete_task(args: dict) -> list[types.TextContent]:

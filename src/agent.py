@@ -13,6 +13,7 @@ import json
 import os
 import re
 import sys
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -21,6 +22,19 @@ from dotenv import load_dotenv
 from groq import Groq, BadRequestError
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
+
+# IST is UTC+5:30
+IST = timezone(timedelta(hours=5, minutes=30))
+
+
+def _current_time_context() -> str:
+    """Return a string describing the current IST time for injection into system prompts."""
+    now = datetime.now(IST)
+    return (
+        f"CURRENT DATE & TIME (user's local time, IST / UTC+05:30): "
+        f"{now.strftime('%A, %d %B %Y %I:%M %p')} "
+        f"| ISO 8601: {now.strftime('%Y-%m-%dT%H:%M:%S+05:30')}"
+    )
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -40,7 +54,9 @@ FALLBACK_MODELS = [
 # Each turn = 1 user + 1 assistant (or tool) message pair.
 MAX_HISTORY_MESSAGES = 40  # ~20 turns
 
-SYSTEM_PROMPT = """You are a powerful personal AI assistant with LIVE access to all the user's Google services via MCP tools.
+SYSTEM_PROMPT_TEMPLATE = """You are a powerful personal AI assistant with LIVE access to all the user's Google services via MCP tools.
+
+{time_context}
 
 You have the following tools available:
 
@@ -60,6 +76,15 @@ CRITICAL RULES — YOU MUST FOLLOW THESE WITHOUT EXCEPTION:
 6. NEVER fabricate tool results. If a tool returns an error, explain the error clearly to the user.
 7. Always ask for confirmation before sending emails, creating/deleting calendar events, or creating tasks.
 8. Present results clearly, concisely, and beautifully formatted in markdown.
+
+TIME & TIMEZONE RULES (CRITICAL — follow for ALL calendar/task operations):
+- The user is in IST (India Standard Time, UTC+05:30). Always use +05:30 as the timezone offset.
+- When the user says a time like '3 PM', '10 AM', 'tomorrow at 6', always convert it to a full ISO 8601 string: YYYY-MM-DDTHH:MM:SS+05:30.
+- 'Today' = the current date shown above. 'Tomorrow' = current date + 1 day.
+- NEVER use UTC (Z suffix) for calendar event start/end times — always use +05:30.
+- For Google Tasks 'due' field, use YYYY-MM-DDTHH:MM:SS+05:30 format (the time part will be treated as midnight locally).
+- If the user does not specify an end time for a calendar event, default the event duration to 1 hour.
+- ALWAYS confirm the exact date and time you understood before creating a calendar event or task.
 """
 
 
@@ -139,9 +164,15 @@ class GmailGroqAgent:
 
             for model_name in FALLBACK_MODELS:
                 try:
+                    # Inject fresh current time on every LLM call so the model
+                    # always has the exact current IST datetime — critical for
+                    # correct calendar event and task due-date construction.
+                    system_prompt = SYSTEM_PROMPT_TEMPLATE.format(
+                        time_context=_current_time_context()
+                    )
                     response = self.groq.chat.completions.create(
                         model=model_name,
-                        messages=[{"role": "system", "content": SYSTEM_PROMPT}] + self.history,
+                        messages=[{"role": "system", "content": system_prompt}] + self.history,
                         tools=self._tools,
                         tool_choice="auto",
                     )
