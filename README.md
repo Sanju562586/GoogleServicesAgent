@@ -1,4 +1,4 @@
-# 🤖 Google Services AI Agent
+# Google Services AI Agent
 
 > A terminal-based personal AI assistant powered by **Groq (LLaMA 3.3-70B)** and the **Model Context Protocol (MCP)**.  
 > Chat naturally to control your Gmail, Drive, Calendar, Photos, Tasks, and Contacts — all from one interface.
@@ -10,7 +10,7 @@
 
 ---
 
-## ✨ What It Can Do
+## What It Can Do
 
 ```
 You: Summarize my unread emails from today
@@ -23,7 +23,7 @@ You: Find the phone number in my contacts
 
 ---
 
-## 🏗️ Architecture
+## Architecture
 
 ![Alt text](HLD.png)
 
@@ -36,7 +36,7 @@ You: Find the phone number in my contacts
 
 ---
 
-## 🚀 Setup
+## Setup
 
 ### Prerequisites
 - Python 3.11+
@@ -84,12 +84,12 @@ Get your Groq key for free at [console.groq.com](https://console.groq.com).
 1. Go to [Google Cloud Console](https://console.cloud.google.com)
 2. Create a project (or use an existing one)
 3. Go to **APIs & Services → Library** and enable:
-   - ✅ Gmail API
-   - ✅ Google Drive API
-   - ✅ Google Calendar API
-   - ✅ Google Photos Library API
-   - ✅ Tasks API
-   - ✅ People API (Contacts)
+   - Gmail API
+   - Google Drive API
+   - Google Calendar API
+   - Google Photos Library API
+   - Tasks API
+   - People API (Contacts)
 4. Go to **Credentials → Create Credentials → OAuth 2.0 Client ID**
    - Application type: **Desktop app**
 5. Download the JSON → rename to `credentials.json` → place in `config/`
@@ -116,9 +116,9 @@ python main.py
 
 ---
 
-## 🛠️ Available Tools (23 total)
+## Available Tools (23 total)
 
-### 📧 Gmail
+### Gmail
 | Tool | Description |
 |---|---|
 | `gmail_list_emails` | List recent emails from inbox or any label |
@@ -127,7 +127,7 @@ python main.py
 | `gmail_send_email` | Compose and send a new email |
 | `gmail_reply_email` | Reply to an existing email thread |
 
-### 📁 Google Drive
+### Google Drive
 | Tool | Description |
 |---|---|
 | `drive_list_files` | List files sorted by most recently modified |
@@ -136,7 +136,7 @@ python main.py
 | `drive_read_file` | Read content of Docs, Sheets (CSV), or text files |
 | `drive_create_folder` | Create a new folder |
 
-### 📅 Google Calendar
+### Google Calendar
 | Tool | Description |
 |---|---|
 | `calendar_list_events` | List upcoming events in a time window |
@@ -144,14 +144,14 @@ python main.py
 | `calendar_create_event` | Create an event with attendees and location |
 | `calendar_delete_event` | Delete an event by ID |
 
-### 📸 Google Photos
+### Google Photos
 | Tool | Description |
 |---|---|
 | `photos_list_albums` | List all photo albums |
 | `photos_list_photos` | List photos (optionally from a specific album) |
 | `photos_search_photos` | Search by date range or category (SELFIES, LANDSCAPES, FOOD, etc.) |
 
-### ✅ Google Tasks
+### Google Tasks
 | Tool | Description |
 |---|---|
 | `tasks_list_tasklists` | List all task lists |
@@ -159,7 +159,7 @@ python main.py
 | `tasks_create_task` | Create a new task with optional due date |
 | `tasks_complete_task` | Mark a task as completed |
 
-### 👤 Google Contacts
+### Google Contacts
 | Tool | Description |
 |---|---|
 | `contacts_list` | List all contacts |
@@ -167,7 +167,7 @@ python main.py
 
 ---
 
-## 💬 Example Prompts
+## Example Prompts
 
 ```
 # Gmail
@@ -197,16 +197,16 @@ List all my contacts
 
 ---
 
-## ⚙️ Configuration Reference
+## Configuration Reference
 
 | Variable | Required | Description |
 |---|---|---|
-| `GROQ_API_KEY` | ✅ Yes | Your Groq API key |
+| `GROQ_API_KEY` | Yes | Your Groq API key |
 | `GROQ_MODEL` | No | Override model (default: `llama-3.3-70b-versatile`) |
 
 ---
 
-## 📂 Project Structure
+## Project Structure
 
 ```
 GoogleServicesAgent/
@@ -216,9 +216,9 @@ GoogleServicesAgent/
 ├── README.md
 ├── .gitignore
 ├── config/
-│   ├── credentials.json           # ← you provide this (OAuth client ID)
-│   ├── credentials.json.example   # ← reference format
-│   └── token.json                 # ← auto-generated after first login
+│   ├── credentials.json           # <- you provide this (OAuth client ID)
+│   ├── credentials.json.example   # <- reference format
+│   └── token.json                 # <- auto-generated after first login
 └── src/
     ├── __init__.py
     ├── agent.py                   # Groq agent + MCP client orchestrator
@@ -229,7 +229,7 @@ GoogleServicesAgent/
 
 ---
 
-## 🔒 Security Notes
+## Security Notes
 
 - **`.env` and `config/token.json` are in `.gitignore`** — they are never committed
 - OAuth tokens are stored locally in `config/token.json` only
@@ -237,6 +237,6 @@ GoogleServicesAgent/
 
 ---
 
-## 📄 License
+## License
 
 MIT © [Sanju562586](https://github.com/Sanju562586)
