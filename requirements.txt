@@ -14,3 +14,7 @@ requests>=2.31.0
 
 # Environment Management
 python-dotenv>=1.0.0
+
+# Web UI (FastAPI server + WebSocket)
+fastapi>=0.111.0
+uvicorn[standard]>=0.29.0
