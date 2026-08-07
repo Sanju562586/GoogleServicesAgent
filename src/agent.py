@@ -431,10 +431,14 @@ class GmailGroqAgent:
     # ── Internal helpers ───────────────────────────────────────────────────────
 
     def _trim_history(self) -> None:
-        """Trim conversation history to MAX_HISTORY_MESSAGES, keeping pairs intact."""
+        """Trim conversation history to MAX_HISTORY_MESSAGES while preserving tool-call integrity."""
         if len(self.history) > MAX_HISTORY_MESSAGES:
             trim_to = MAX_HISTORY_MESSAGES - (MAX_HISTORY_MESSAGES % 2)
-            self.history = self.history[-trim_to:]
+            trimmed = self.history[-trim_to:]
+            # Ensure history does not start with an orphaned tool response
+            while trimmed and trimmed[0].get("role") == "tool":
+                trimmed.pop(0)
+            self.history = trimmed
 
     async def _llm_call_with_fallback(
         self,

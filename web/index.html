@@ -6,212 +6,39 @@
   <title>Google Services AI Agent</title>
   <meta name="description" content="AI-powered personal assistant with live access to Gmail, Drive, Calendar, Photos, Tasks and Contacts." />
 
-  <!-- Fonts -->
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
-
-  <!-- Highlight.js (code syntax) -->
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css" />
-
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark-dimmed.min.css" />
   <link rel="stylesheet" href="/static/style.css" />
+
+  <!--
+    importmap: maps bare module names to ESM CDN URLs.
+    Must appear before any type="module" script.
+  -->
+  <script type="importmap">
+  {
+    "imports": {
+      "react":            "https://esm.sh/react@18.3.1",
+      "react-dom":        "https://esm.sh/react-dom@18.3.1",
+      "react-dom/client": "https://esm.sh/react-dom@18.3.1/client",
+      "framer-motion":    "https://esm.sh/framer-motion@11.18.2?deps=react@18.3.1,react-dom@18.3.1",
+      "/":                "https://esm.sh/"
+    }
+  }
+  </script>
 </head>
 <body>
+  <div id="root"></div>
 
-  <!-- ═══════════════════════════════════════════════════════════
-       AUTH SCREEN  (visible until the user has authenticated)
-       ═══════════════════════════════════════════════════════════ -->
-  <div id="authScreen" class="auth-screen hidden">
-    <div class="auth-card">
-
-      <!-- Multi-colour G icon built from CSS squares -->
-      <div class="google-icon" aria-hidden="true">
-        <svg width="44" height="44" viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg">
-          <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/>
-          <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/>
-          <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/>
-          <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.18 1.48-4.97 2.31-8.16 2.31-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/>
-          <path fill="none" d="M0 0h48v48H0z"/>
-        </svg>
-      </div>
-
-      <h1 class="auth-title">Google Services AI Agent</h1>
-      <p class="auth-desc">
-        Connect your Google account to get AI-powered access to your Gmail, Drive,
-        Calendar, Photos, Tasks and Contacts — all from one beautiful interface.
-      </p>
-
-      <a href="/auth/login" class="google-btn" id="authBtn">
-        <svg width="18" height="18" viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-          <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/>
-          <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/>
-          <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/>
-          <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.18 1.48-4.97 2.31-8.16 2.31-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/>
-        </svg>
-        Sign in with Google
-      </a>
-
-      <div class="auth-services">
-        <span class="svc-pill" style="--c:#ea4335">Gmail</span>
-        <span class="svc-pill" style="--c:#4285f4">Drive</span>
-        <span class="svc-pill" style="--c:#0f9d58">Calendar</span>
-        <span class="svc-pill" style="--c:#fbbc04">Photos</span>
-        <span class="svc-pill" style="--c:#ff6d00">Tasks</span>
-        <span class="svc-pill" style="--c:#46bdc6">Contacts</span>
-      </div>
-
-      <p class="auth-note">
-        Your credentials are stored locally in <code>config/token.json</code> and never leave your machine.
-      </p>
-    </div>
-  </div>
-
-
-  <!-- ═══════════════════════════════════════════════════════════
-       CHAT APP  (hidden until authenticated)
-       ═══════════════════════════════════════════════════════════ -->
-  <div id="chatApp" class="app hidden">
-
-    <!-- ── Sidebar ──────────────────────────────────────────────── -->
-    <aside class="sidebar">
-
-      <div class="sidebar-top">
-        <div class="brand">
-          <div class="brand-icon">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-              <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"
-                stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-            </svg>
-          </div>
-          <div>
-            <div class="brand-name">Google Agent</div>
-            <div class="brand-sub">AI Personal Assistant</div>
-          </div>
-        </div>
-
-        <div class="status-pill" id="statusPill">
-          <div class="status-dot" id="statusDot"></div>
-          <span id="statusText">Connecting…</span>
-        </div>
-      </div>
-
-      <!-- Scrollable middle -->
-      <div class="sidebar-scroll">
-
-        <div class="sidebar-section">
-          <div class="section-label">Connected Services</div>
-          <ul class="service-list" aria-label="Google services">
-            <li class="service-item"><span class="svc-dot" style="background:#ea4335"></span><span class="svc-name">Gmail</span><span class="svc-badge">5</span></li>
-            <li class="service-item"><span class="svc-dot" style="background:#4285f4"></span><span class="svc-name">Drive</span><span class="svc-badge">5</span></li>
-            <li class="service-item"><span class="svc-dot" style="background:#0f9d58"></span><span class="svc-name">Calendar</span><span class="svc-badge">5</span></li>
-            <li class="service-item"><span class="svc-dot" style="background:#fbbc04"></span><span class="svc-name">Photos</span><span class="svc-badge">3</span></li>
-            <li class="service-item"><span class="svc-dot" style="background:#ff6d00"></span><span class="svc-name">Tasks</span><span class="svc-badge">4</span></li>
-            <li class="service-item"><span class="svc-dot" style="background:#46bdc6"></span><span class="svc-name">Contacts</span><span class="svc-badge">2</span></li>
-          </ul>
-        </div>
-
-        <div class="sidebar-section">
-          <div class="section-label">Quick Actions</div>
-          <div class="quick-list">
-            <button class="quick-btn" data-prompt="Show my unread emails from today">
-              <span class="qa-icon" style="color:#ea4335">M</span>Unread emails today
-            </button>
-            <button class="quick-btn" data-prompt="What's on my calendar today and tomorrow?">
-              <span class="qa-icon" style="color:#0f9d58">C</span>Today's schedule
-            </button>
-            <button class="quick-btn" data-prompt="List my recent Google Drive files">
-              <span class="qa-icon" style="color:#4285f4">D</span>Recent Drive files
-            </button>
-            <button class="quick-btn" data-prompt="Show all my pending tasks">
-              <span class="qa-icon" style="color:#ff6d00">T</span>Pending tasks
-            </button>
-            <button class="quick-btn" data-prompt="List my photo albums">
-              <span class="qa-icon" style="color:#fbbc04">P</span>Photo albums
-            </button>
-            <button class="quick-btn" data-prompt="List all my contacts">
-              <span class="qa-icon" style="color:#46bdc6">K</span>All contacts
-            </button>
-          </div>
-        </div>
-
-      </div><!-- /sidebar-scroll -->
-
-      <div class="sidebar-footer">
-        <button class="new-chat-btn" id="newChatBtn">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-            <path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/>
-          </svg>
-          New Conversation
-        </button>
-      </div>
-    </aside>
-
-    <!-- ── Main chat ──────────────────────────────────────────── -->
-    <main class="chat-main">
-
-      <header class="chat-header">
-        <div class="header-left">
-          <h1>Google Services AI</h1>
-          <p>Powered by Groq · LLaMA 3.3-70B</p>
-        </div>
-        <div class="header-right">
-          <div class="tools-badge">23 Tools Active</div>
-        </div>
-      </header>
-
-      <section class="messages" id="messages" aria-live="polite" aria-label="Conversation">
-        <div class="welcome-card" id="welcomeCard">
-          <div class="wc-icon" aria-hidden="true">
-            <svg width="38" height="38" viewBox="0 0 24 24" fill="none">
-              <defs>
-                <linearGradient id="wg" x1="0%" y1="0%" x2="100%" y2="100%">
-                  <stop offset="0%" stop-color="#6366f1"/>
-                  <stop offset="100%" stop-color="#8b5cf6"/>
-                </linearGradient>
-              </defs>
-              <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"
-                stroke="url(#wg)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-            </svg>
-          </div>
-          <h2>Your AI-Powered Google Assistant</h2>
-          <p>I have live access to your Gmail, Drive, Calendar, Photos, Tasks and Contacts. Just ask me anything!</p>
-          <div class="example-chips">
-            <button class="chip" onclick="useChip(this)">"Summarize my last 5 emails"</button>
-            <button class="chip" onclick="useChip(this)">"Create a meeting tomorrow at 3 PM"</button>
-            <button class="chip" onclick="useChip(this)">"Search Drive for budget files"</button>
-            <button class="chip" onclick="useChip(this)">"Show my tasks due this week"</button>
-          </div>
-        </div>
-      </section>
-
-      <div class="input-area">
-        <div class="input-wrap" id="inputWrap">
-          <textarea
-            id="userInput"
-            placeholder="Ask about your Gmail, Calendar, Drive, Photos, Tasks or Contacts…"
-            rows="1"
-            maxlength="4000"
-            aria-label="Message input"
-          ></textarea>
-          <button class="send-btn" id="sendBtn" disabled aria-label="Send message">
-            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-              <path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"
-                stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-            </svg>
-          </button>
-        </div>
-        <p class="input-hint">
-          Press <kbd>Enter</kbd> to send &nbsp;·&nbsp; <kbd>Shift</kbd>+<kbd>Enter</kbd> for new line
-        </p>
-      </div>
-
-    </main>
-  </div><!-- /chatApp -->
-
-
-  <!-- CDN libraries -->
-  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <!--
+    marked + hljs loaded as classic scripts (sync) so window.marked / window.hljs
+    are available by the time the deferred ES module runs.
+  -->
+  <script src="https://cdn.jsdelivr.net/npm/marked@4/marked.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
-  <script src="/static/app.js"></script>
+
+  <!-- App: native ES module, no Babel or transpilation needed -->
+  <script type="module" src="/static/app.js"></script>
 </body>
 </html>
