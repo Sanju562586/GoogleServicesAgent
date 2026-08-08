@@ -7,6 +7,18 @@
 config/credentials.json
 config/token.json
 
+# ── Node.js & Next.js Frontend ────────────────────────────────────────────────
+node_modules/
+frontend/node_modules/
+.next/
+frontend/.next/
+out/
+frontend/out/
+.next-env.d.ts
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
 # ── Python ─────────────────────────────────────────────────────────────────────
 __pycache__/
 *.py[cod]
@@ -70,6 +82,5 @@ logs/
 *.pid
 
 # ── Project-specific ───────────────────────────────────────────────────────────
-# Keep example files so others can set up the project
 !config/credentials.json.example
 !.env.example
